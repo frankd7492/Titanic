@@ -1,0 +1,332 @@
+---
+title: "Titanic"
+author: "Frank D'Ambrosio"
+date: "4/22/2021"
+output: html_document
+---
+Variables
+Survived (0,1)
+Pclass (1,2,3)
+Name
+Sex (male, female)
+Age 
+SibSp 
+Parch
+Ticket
+Fare
+Cabin
+Embarked
+
+
+What I want to do:
+fill in missing data
+determine which variable are important
+create a tree for each
+create a forest from them
+predict data with forest
+write into final csv
+
+Read in data
+```{r}
+sub <- read.csv("gender_submission.csv")
+train <- read.csv("train.csv")
+test <- read.csv("test.csv")
+str(test)
+
+(lived <- sum(train$Survived)/nrow(train))
+
+#show if data is test or train
+train$IsTrain <- TRUE
+test$IsTrain <- FALSE
+
+
+#need a survived column in test
+test$Survived <- NA
+
+names(train)
+names(test)
+ncol(train)
+ncol(test)
+#combine them
+comb <- rbind(train , test)
+names(comb)
+
+
+
+
+(died <- 1-lived)
+
+```
+
+Load packages
+```{r}
+library(ggplot2) 
+#library(ggthemes) 
+#library(scales) 
+library(dplyr) 
+library(mice) 
+library(randomForest) 
+library(VIM)
+```
+
+
+factors
+```{r}
+train$Survived <- as.factor(train$Survived)
+train$Pclass <- as.factor(train$Pclass)
+train$Embarked <- as.factor(train$Embarked)
+
+
+
+
+comb$Survived <- as.factor(comb$Survived)
+comb$Pclass <- as.factor(comb$Pclass)
+#comb$Age <- as.factor(comb$Age)
+#comb$Ticket <- as.factor(comb$Ticket)
+comb$Embarked <- as.factor(comb$Embarked)
+
+```
+
+Names/Titles
+```{r}
+# Grab title from passenger names
+#https://www.journaldev.com/43690/sub-and-gsub-function-r
+comb$Title <- gsub('(.*, )|(\\..*)', '', comb$Name)
+
+
+(unique(comb[c("Title")]))
+#We have some similar titles just spelled differently so we need to combine those
+#Mr, Mrs, Miss, Master, Don, Rev, Dr, Mme, Ms, Major, Lady, Sir, Mlle, Col, Capt, the Countess, Jonkheer, Dona (only in test)
+comb$Title[comb$Title == 'Mlle']<- 'Miss' #Mlle is Mademoiselle which is the unmarried version of Madame
+comb$Title[comb$Title == 'Ms']<- 'Miss'
+comb$Title[comb$Title == 'Mme']<- 'Mrs'
+comb$Title[comb$Title == 'Capt' ] <- 'Nob'#for royalty/nobility/esteem
+comb$Title[comb$Title == 'Col' ] <- 'Nob'
+comb$Title[comb$Title == 'Don' ] <- 'Nob'
+comb$Title[comb$Title == 'Dr' ] <- 'Nob'
+comb$Title[comb$Title == 'Jonkheer' ] <- 'Nob'
+comb$Title[comb$Title == 'Major' ] <- 'Nob'
+comb$Title[comb$Title == 'Rev' ] <- 'Nob'
+comb$Title[comb$Title == 'Sir' ] <- 'Nob'
+comb$Title[comb$Title == 'the Countess' ] <- 'Nob'
+comb$Title[comb$Title == 'Lady' ] <- 'Nob'
+comb$Title[comb$Title == 'Dona' ] <- 'Nob'
+
+comb$Title <- as.factor(comb$Title)
+
+# Show title counts by sex
+table(comb$Sex, comb$Title)
+
+# Create a family size variable including the passenger themselves
+comb$Fam_size <- comb$SibSp + comb$Parch + 1
+
+
+
+```
+
+
+
+Age
+```{r}
+
+age.out <- boxplot.stats(comb$Age)$stats[5] #looks like anything over 66 is a statistical outlier
+age.out.filt <-  comb$Age < age.out #filter out ages over 66
+comb[age.out.filt,]
+
+age.equation <- "Age ~ Pclass + Sex + Fam_size + Embarked"
+
+```
+
+
+Missing Values
+```{r}
+
+aggr(comb)
+matrixplot(comb)
+
+colSums(is.na(train)) #177 missing values for age
+colSums(is.na(test)) #86 age values missing in test, 1 fare missing, I don think that is significant
+colSums(is.na(comb)) #263 for all which checks out
+
+
+
+
+#Running MICE
+summary(comb)
+#mean age is 29.88
+#mean Parch is .385
+#mean Fare is 33.295
+comb2 <- comb #create a second combined data set that will still have missingness
+
+#age.comb.miss <- mice(comb, m = m, method = "cart")
+colSums(is.na(comb))
+
+#comb$Embarked[which(is.na(comb$Embarked))] = mode(comb$Embarked)
+#comb$Age[which(is.na(comb$Age))] = mean(comb$Age, na.rm = TRUE) #fill in missing age
+#comb$Age
+comb$Fare[which(is.na(comb$Fare))] = mean(comb$Fare, na.rm = TRUE) #fill in missing fare
+
+# want to look at age
+#want to look at outliers of age
+aggr(comb)
+boxplot(comb$Age)
+
+
+summary(comb2$Age)
+
+
+#Mice Imputation 
+#names(train)
+#names(test)
+
+comb2$Survived <- as.factor(comb2$Survived) #need to have these as factors 
+comb2$Pclass <- as.ordered(comb2$Pclass)
+comb2$Embarked <- as.factor(comb2$Embarked)
+
+m = 5
+titanic_imp <- mice(comb , m=5 , method = "cart" , maxit = 20 )
+summary(titanic_imp)
+
+imp_data <- complete(titanic_imp)
+
+summary(comb$Age)
+
+
+#now I want to take the imputed complete data set and use the complete variable columns and put them back into the comb2 data set
+
+aggr(comb2) #here im just confirming the data is still missing
+
+comb2$Age <- imp_data$Age
+comb2$Pclass <- imp_data$Pclass
+comb2$Embarked <- imp_data$Embarked
+comb2$Fare[which(is.na(comb2$Fare))] <-  mean(comb$Fare[fare.out.filt], na.rm = TRUE)
+#I also need to put the titles back in from the early transformation
+comb2$Title <- comb$Title
+summary(comb2)
+#Kachow
+
+
+```
+
+Now I want to separate back into train and test sets
+```{r}
+t.train <- comb2[comb2$IsTrain == TRUE,]
+t.test <- comb2[comb2$IsTrain == FALSE,]
+summary(t.train)
+summary(t.test)
+
+t.train$Survived <- as.factor(t.train$Survived)
+#str(t.train)
+
+
+```
+
+
+plots showing relationships in the training data set
+```{r}
+table(t.train$Survived, t.train$Age)
+
+ggplot(aes(y = Age, x = Survived), data = t.train) + geom_boxplot()
+ggplot(aes(y = Parch, x = Survived), data = t.train) + geom_boxplot()
+ggplot(aes(y = Pclass, x = Survived), data = t.train) + geom_boxplot()
+ggplot(aes(y = Fam_size, x = Survived), data = t.train) + geom_boxplot()
+ggplot(aes(y = Embarked, x = Survived), data = t.train) + geom_boxplot()
+ggplot(aes(y = Title, x = Survived), data = t.train) + geom_boxplot()
+ggplot(aes(y = Fare, x = Survived), data = t.train) + geom_boxplot()
+
+```
+
+Now I want to create random forest based on the data
+base model
+```{r}
+
+#Predict Survived
+set.seed(7492)
+ind <- sample(891, 623)
+train_cv <- t.train[ind,]
+test_cv <- t.train[-ind,]
+
+str(train_cv)
+#going to create the random forest here
+# Pclass + Sex + Age + Fare + Embarked + Fam_size + Title
+titanic.rf <- randomForest(as.factor(Survived)~ Pclass + Sex + Age + Fare + Embarked + Fam_size + Title , data= train_cv, ntree = 300 )
+summary(test_cv)
+plot(titanic.rf)
+
+Survived <-  predict(titanic.rf , t.test)
+PassengerId <- t.test$PassengerId
+summary(Survived)
+final <- data.frame(PassengerId, Survived)
+write.csv(final, file = "Frank_Titanic_Predictions6.csv", row.names = FALSE)
+
+```
+model 6
+```{r}
+
+
+#Predict Survived
+set.seed(7492)
+ind <- sample(891, 623)
+train_cv <- t.train[ind,]
+test_cv <- t.train[-ind,]
+
+str(train_cv)
+#going to create the random forest here
+# Pclass + Sex + Age + Fare + Embarked + Fam_size + Title
+titanic.rf <- randomForest(as.factor(Survived)~ Pclass + Sex + Age + Fare + Embarked + Fam_size + Title , data= train_cv, ntree = 300 )
+summary(test_cv)
+plot(titanic.rf)
+
+Survived <-  predict(titanic.rf , t.test)
+PassengerId <- t.test$PassengerId
+summary(Survived)
+final <- data.frame(PassengerId, Survived)
+write.csv(final, file = "Frank_Titanic_Predictions6.csv", row.names = FALSE)
+
+```
+model 7
+```{r}
+
+#Predict Survived
+set.seed(7492)
+ind <- sample(891, 623)
+train_cv <- t.train[ind,]
+test_cv <- t.train[-ind,]
+
+str(train_cv)
+#going to create the random forest here
+# Pclass + Sex + Age + Fare + Embarked + Fam_size + Title
+titanic.rf <- randomForest(as.factor(Survived)~ Pclass + Sex + Age  + Fam_size + Title , data= train_cv, ntree = 300 )
+summary(test_cv)
+plot(titanic.rf)
+
+Survived <-  predict(titanic.rf , t.test)
+PassengerId <- t.test$PassengerId
+summary(Survived)
+final <- data.frame(PassengerId, Survived)
+write.csv(final, file = "Frank_Titanic_Predictions7.csv", row.names = FALSE)
+
+```
+model 8
+```{r}
+
+#Predict Survived
+set.seed(7492)
+ind <- sample(891, 623)
+train_cv <- t.train[ind,]
+test_cv <- t.train[-ind,]
+
+str(train_cv)
+#going to create the random forest here
+# Pclass + Sex + Age + Fare + Embarked + Fam_size + Title
+titanic.rf <- randomForest(as.factor(Survived)~ Pclass + Sex + Age + Fare + Embarked + Fam_size + Title , data= train_cv, ntree = 300 )
+summary(test_cv)
+plot(titanic.rf)
+
+Survived <-  predict(titanic.rf , t.test)
+PassengerId <- t.test$PassengerId
+summary(Survived)
+final <- data.frame(PassengerId, Survived)
+write.csv(final, file = "Frank_Titanic_Predictions6.csv", row.names = FALSE)
+
+```
